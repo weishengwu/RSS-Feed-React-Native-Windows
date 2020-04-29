@@ -1,0 +1,82 @@
+# Universal Windows Platform
+# Build a Universal Windows Platform project using Visual Studio.
+# Add steps that test and distribute an app, save build artifacts, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+# name: $(date:yyyy).$(Month)$(rev:.r).0
+
+# pool: Default
+pool:
+  vmImage: 'vs2017-win2016'
+
+variables:
+  solution: 'windows/*.sln'
+  buildPlatform: 'x64'
+  buildConfiguration: 'Release'
+  appxPackageDir: '$(build.artifactStagingDirectory)\AppxPackages\\'
+  appInstallerTemplate: '$(appxPackageDir)\\trailsapp_x64.appinstaller'
+
+steps:
+
+- task: UseNode@1
+  inputs:
+    version: '12.9.1'
+
+- script: choco install windows-sdk-10-version-1903-all
+  displayName: 'Install Windows 10 1903 SDK'
+
+- task: DotNetCoreCLI@2
+  inputs:
+    command: custom
+    custom: tool
+    arguments: install --tool-path . nbgv
+  displayName: Install NBGV tool
+
+- script: nbgv cloud -c -a
+  displayName: Set Version
+
+- task: VersionAPPX@2
+  displayName: 'Version MSIX'
+  inputs:
+    Path: '$(Build.SourcesDirectory)'
+    VersionNumber: '$(Build.BuildNumber).0'
+    InjectVersion: true
+
+- script: |
+        yarn install
+        npm config set prefix C:\Users\VssAdministrator\AppData\Roaming\npm
+        npm install -g react-native-cli
+  displayName: 'Setup NPM packages'
+
+- task: NuGetToolInstaller@1
+  inputs:
+    versionSpec: '5.x'
+    checkLatest: true
+
+- task: NuGetCommand@2
+  inputs:
+    command: 'restore'
+    restoreSolution: '$(solution)'
+    feedsToUse: 'select'
+
+- task: VSBuild@1
+  inputs:
+    solution: '$(solution)'
+    msbuildArgs: '/restore /p:AppxBundlePlatforms="$(buildPlatform)" /p:AppxPackageDir="$(appxPackageDir)" /p:AppxBundle=Never /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxPackageSigningEnabled=false'
+    platform: '$(buildPlatform)'
+    configuration: '$(buildConfiguration)'
+
+- powershell: |
+    [xml]$appInstaller= get-content "$(appInstallerTemplate)"
+    $appInstaller.AppInstaller.xmlns = 'http://schemas.microsoft.com/appx/appinstaller/2018'
+    $appInstaller.AppInstaller.UpdateSettings.OnLaunch.SetAttribute("ShowPrompt", "true")
+    $appInstaller.save("$(appInstallerTemplate)")
+  displayName: 'Update AppInstaller'
+
+- task: PublishBuildArtifacts@1
+  inputs:
+    PathtoPublish: '$(appxPackageDir)'
+    ArtifactName: 'drop'
